@@ -1,0 +1,205 @@
+# ==============================================================================
+# PitStop (.gitignore)
+# Comprehensive Git Ignore for Full-Stack Mobile & Web Project
+# (Ionic + React + Capacitor + Vite + Node.js Express + WebSockets + TypeScript)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Dependencies & Package Managers
+# ------------------------------------------------------------------------------
+node_modules/
+.pnp/
+.pnp.js
+.pnpm-store/
+.npm/
+
+# Yarn v2+ / Berry
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+.yarn-integrity
+
+# ------------------------------------------------------------------------------
+# 2. Build Outputs & Compilers
+# ------------------------------------------------------------------------------
+# Vite / Frontend build artifacts (client)
+/client/dist/
+/client/build/
+dist/
+build/
+out/
+
+# Server build outputs (server/dist)
+/server/dist/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Tooling caches
+.cache/
+.vite/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.nx/
+
+# ------------------------------------------------------------------------------
+# 3. Environment Variables & Credentials (HIGH SECURITY)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+*.env.*
+
+# Allow tracking example/template env files
+!.env.example
+!.env*.example
+!*.env.example
+
+# Private keys, certificates, & credentials
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+
+# ------------------------------------------------------------------------------
+# 4. Logs, Runtime & Process Files
+# ------------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+pid
+*.pid
+*.seed
+*.pid.lock
+
+# ------------------------------------------------------------------------------
+# 5. Testing & Code Quality Outputs
+# ------------------------------------------------------------------------------
+# Coverage reports (Vitest, Jest, Istanbul, NYC)
+coverage/
+.nyc_output/
+
+# Cypress testing artifacts
+cypress/videos/
+cypress/screenshots/
+cypress/downloads/
+
+# Playwright / Other e2e reports
+playwright-report/
+test-results/
+
+# ------------------------------------------------------------------------------
+# 6. Capacitor & Native Mobile Platforms (Android & iOS)
+# ------------------------------------------------------------------------------
+# General Capacitor internal files
+capacitor.internal.json
+
+# --- Android ---
+**/android/.gradle/
+**/android/build/
+**/android/app/build/
+**/android/local.properties
+**/android/.idea/
+**/android/*.iml
+**/android/app/*.iml
+**/android/captures/
+**/android/.cxx/
+
+# Android build outputs & signing keys
+*.apk
+*.aab
+*.ap_
+*.dex
+*.keystore
+*.jks
+
+# --- iOS ---
+**/ios/DerivedData/
+**/ios/App/build/
+**/ios/App/Pods/
+**/ios/App/.symlinks/
+**/ios/*.xcworkspace/xcuserdata/
+**/ios/*.xcodeproj/xcuserdata/
+**/ios/*.xcodeproj/project.xcworkspace/xcuserdata/
+*.mobileprovision
+
+# ------------------------------------------------------------------------------
+# 7. Databases & Local Storage
+# ------------------------------------------------------------------------------
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.db
+*.db-shm
+*.db-wal
+dump.rdb
+
+# ------------------------------------------------------------------------------
+# 8. Operating System & Filesystem Junk
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.trash*
+
+# ------------------------------------------------------------------------------
+# 9. IDEs, Editors & Developer Tools
+# ------------------------------------------------------------------------------
+# JetBrains (WebStorm, IntelliJ IDEA, Android Studio)
+.idea/
+*.iml
+*.iws
+
+# Visual Studio Code (ignore user settings & workspaces, keep team recommendations)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+*.code-workspace
+
+# Visual Studio & Windows development
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Other editors
+.fleet/
+.zed/
+.cursor/
+
+# Temporary / Scratch directories
+scratch/
+
+# Implementation Guides
+/implementation.md
