@@ -5,16 +5,30 @@ export interface LocationCoordinates{
 
 export interface ServiceItem{
     id: string; // UUID
+    userId:string; // Tenancy ownership
     serviceName: string;
     cost: number;
     mileage: number;
     serviceDate: string; // date string (YYYY-MM-DD)
+    category:string; // e.g. "Maintenance", "Repair"
     isCompleted: boolean;
-    location: LocationCoordinates;
+    location?: LocationCoordinates | undefined;
+    createdAt?: string | undefined;
 }
 
-export type CreateServiceItemDto=Omit<ServiceItem,'id'>;
+export type CreateServiceItemDto=Omit<ServiceItem,'id'|'userId'|'createdAt'>;
 export type UpdateServiceItemDto=Partial<CreateServiceItemDto>;
+
+export interface PaginatedResult<T>{
+    data:T[];
+    pagination:{
+        total:number;
+        page:number;
+        limit:number;
+        totalPages:number;
+        hasMore:boolean;
+    }
+}
 
 export type WsEventType='ITEM_CREATED' | 'ITEM_UPDATED' | 'ITEM_DELETED';
 
@@ -22,4 +36,10 @@ export interface WsMessage<T = unknown>{
     event:WsEventType;
     payload:T;
     timestamp:string;
+}
+
+export interface AuthenticatedUser{
+    id:string;
+    email:string;
+    name?:string | undefined;
 }

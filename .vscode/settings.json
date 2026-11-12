@@ -1,0 +1,58 @@
+{
+  // ==========================================
+  // Editor Completion & Formatting Stability
+  // ==========================================
+  // Prevents synchronous formatting on typing from aborting completion/ghost-text sessions
+  "editor.formatOnType": false,
+
+  // Inline ghost text and IntelliSense configuration
+  "editor.inlineSuggest.enabled": true,
+  "editor.suggestOnTriggerCharacters": true,
+  "editor.quickSuggestions": {
+    "other": "on",
+    "comments": "off",
+    "strings": "off"
+  },
+  "editor.quickSuggestionsDelay": 10,
+  "editor.suggest.snippetsPreventQuickSuggestions": false,
+
+  // ==========================================
+  // File Watcher Flooding Mitigation
+  // ==========================================
+  // Prevents file watcher event storms from invalidating document ASTs and canceling LSP tokens
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "**/build/**": true,
+    "**/.next/**": true,
+    "**/.cache/**": true,
+    "**/coverage/**": true,
+    "**/.vite/**": true,
+    "**/android/**": true,
+    "**/ios/**": true,
+    "**/.output/**": true,
+    "**/.temp/**": true,
+    "**/.tmp/**": true
+  },
+
+  // Exclude heavy directories from workspace search and indexing
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/build": true,
+    "**/.vite": true,
+    "**/android": true,
+    "**/ios": true,
+    "**/coverage": true
+  },
+
+  // ==========================================
+  // TypeScript & Language Server (LSP) Stability
+  // ==========================================
+  // Increase memory limit to avoid crash loops on large multi-package / fullstack repos
+  "typescript.tsserver.maxTsServerMemory": 4096,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false
+}
+

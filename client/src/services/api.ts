@@ -1,51 +1,68 @@
-import { CreateServiceItemDto, ServiceItem, UpdateServiceItemDto } from '../types/item.types';
+import { CreateServiceItemDto, PaginatedResult, ServiceItem, UpdateServiceItemDto } from '../types/item.types';
+import axios from 'axios';
+import { storageService } from './storage.service';
 
 const API_BASE_URL = 'http://localhost:4000/api';
 
-async function handleResponse<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(errorBody.error || `HTTP error ${res.status}`);
+const apiClient = axios.create({
+  baseURL: API_BASE_URL
+});
+
+// attach bearer token to every outgoing req
+apiClient.interceptors.request.use(async (config) => {
+  const token = await storageService.getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
-  if (res.status === 204) {
-    return {} as T;
-  }
-  return res.json();
-}
+  return config;
+});
 
 export const itemApi = {
-  async getAll(): Promise<ServiceItem[]> {
-    const res = await fetch(`${API_BASE_URL}/items`);
-    return handleResponse<ServiceItem[]>(res);
+  async getAll(
+    page: number = 1,
+    limit: number = 10,
+    searchQuery: string = '',
+    category: string = 'all'
+  ): Promise<PaginatedResult<ServiceItem>> {
+    const res = await apiClient.get<PaginatedResult<ServiceItem>>('/items', {
+      params: { page, limit, q: searchQuery, category }
+    });
+    return res.data;
   },
 
   async getById(id: string): Promise<ServiceItem> {
-    const res = await fetch(`${API_BASE_URL}/items/${id}`);
-    return handleResponse<ServiceItem>(res);
+    const res = await apiClient.get<ServiceItem>(`/items/${id}`);
+    return res.data;
   },
 
   async create(dto: CreateServiceItemDto): Promise<ServiceItem> {
-    const res = await fetch(`${API_BASE_URL}/items`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dto)
-    });
-    return handleResponse<ServiceItem>(res);
+    const res = await apiClient.post<ServiceItem>('/items', dto);
+    return res.data;
   },
 
   async update(id: string, dto: UpdateServiceItemDto): Promise<ServiceItem> {
-    const res = await fetch(`${API_BASE_URL}/items/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dto)
-    });
-    return handleResponse<ServiceItem>(res);
+    const res = await apiClient.put<ServiceItem>(`/items/${id}`, dto);
+    return res.data;
   },
 
   async delete(id: string): Promise<void> {
-    const res = await fetch(`${API_BASE_URL}/items/${id}`, {
-      method: 'DELETE'
+    await apiClient.delete(`/items/${id}`);
+  },
+
+  async login(email: string, pass: string): Promise<{ token: string; user: any }> {
+    const res = await axios.post(`${API_BASE_URL}/auth/login`, {
+      email,
+      password: pass
     });
-    return handleResponse<void>(res);
+    return res.data;
+  },
+
+  async register(email: string, pass: string, name?: string): Promise<{ token: string; user: any }> {
+    const res = await axios.post(`${API_BASE_URL}/auth/register`, {
+      email,
+      password: pass,
+      name
+    });
+    return res.data;
   }
 };

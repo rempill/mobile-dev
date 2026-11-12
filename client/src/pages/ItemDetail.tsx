@@ -11,6 +11,8 @@ import {
   IonList,
   IonItem,
   IonInput,
+  IonSelect,
+  IonSelectOption,
   IonToggle,
   IonSpinner,
   IonToast,
@@ -30,6 +32,7 @@ const ItemDetail: React.FC = () => {
   const [cost, setCost] = useState<number | string>('');
   const [mileage, setMileage] = useState<number | string>('');
   const [serviceDate, setServiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [category, setCategory] = useState('Maintenance');
   const [isCompleted, setIsCompleted] = useState(false);
 
   const [loading, setLoading] = useState(!isNew);
@@ -47,6 +50,7 @@ const ItemDetail: React.FC = () => {
             setCost(item.cost);
             setMileage(item.mileage);
             setServiceDate(item.serviceDate);
+            setCategory(item.category || 'Maintenance');
             setIsCompleted(item.isCompleted);
           } else {
             setErrorMessage('Service item not found.');
@@ -83,6 +87,7 @@ const ItemDetail: React.FC = () => {
           cost: Number(cost),
           mileage: Number(mileage),
           serviceDate,
+          category,
           isCompleted,
           location: { lat: 44.4323, lng: 26.1063 }
         });
@@ -92,6 +97,7 @@ const ItemDetail: React.FC = () => {
           cost: Number(cost),
           mileage: Number(mileage),
           serviceDate,
+          category,
           isCompleted
         });
       }
@@ -137,6 +143,20 @@ const ItemDetail: React.FC = () => {
                 onIonInput={(e) => setServiceName(e.detail.value ?? '')}
                 required
               />
+            </IonItem>
+
+            {/* Category Selector */}
+            <IonItem>
+              <IonSelect
+                label="Category"
+                labelPlacement="stacked"
+                value={category}
+                onIonChange={(e) => setCategory(e.detail.value)}
+              >
+                <IonSelectOption value="Maintenance">Maintenance</IonSelectOption>
+                <IonSelectOption value="Repair">Repair</IonSelectOption>
+                <IonSelectOption value="Inspection">Inspection</IonSelectOption>
+              </IonSelect>
             </IonItem>
 
             {/* Numeric: Cost */}
