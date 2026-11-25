@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
   IonContent,
   IonHeader,
@@ -41,12 +41,19 @@ import {
   cloudOfflineOutline,
   syncOutline,
   logOutOutline,
-  alertCircleOutline
+  alertCircleOutline,
+  mapOutline
 } from 'ionicons/icons';
 import { useItems } from '../context/ItemContext';
+import { ReceiptThumbnail } from '../components/ReceiptThumbnail';
+import { LocationPreview } from '../components/LocationPreview';
+import { staggerListAnimation, pulseAnimation } from '../theme/animations';
 
 const ItemsList: React.FC = () => {
   const router = useIonRouter();
+  const listRef = useRef<HTMLIonListElement>(null);
+  const pulseBadgeRef = useRef<HTMLIonBadgeElement>(null);
+
   const {
     items,
     loading,
@@ -64,9 +71,30 @@ const ItemsList: React.FC = () => {
     category,
     setCategory,
     user,
-    login,
     logout
   } = useItems();
+
+  // run staggered entrance animation when items change
+  useEffect(() => {
+    if (listRef.current && items.length > 0) {
+      const anim = staggerListAnimation(listRef.current, items.length);
+      anim.play();
+    }
+  }, [items]);
+
+  // run pulsing animation on pending sync badges
+  useEffect(() => {
+    const badges = document.querySelectorAll<HTMLElement>('.pulse-badge');
+    const animations = Array.from(badges).map((badge) => {
+      const anim = pulseAnimation(badge);
+      anim.play();
+      return anim;
+    });
+
+    return () => {
+      animations.forEach((anim) => anim.stop());
+    };
+  }, [pendingSyncCount, items]);
 
   const handleLogout = async () => {
     await logout();
@@ -108,21 +136,12 @@ const ItemsList: React.FC = () => {
           {/*
           Auth control
           */}
-          {user ? (
+          {user && (
             <IonButton slot="end" fill="clear" color="light" onClick={handleLogout} title="Log Out">
               <IonIcon icon={logOutOutline} />
             </IonButton>
-          ) : (
-            <IonButton
-              slot="end"
-              fill="solid"
-              color="secondary"
-              size="small"
-              onClick={() => router.push('/login')}
-            >
-              Sign In
-            </IonButton>
           )}
+
         </IonToolbar>
 
         {/*
@@ -187,16 +206,24 @@ const ItemsList: React.FC = () => {
           </div>
         )}
 
-        <IonList>
+        <IonList ref={listRef}>
           {items.map((item) => (
-            <IonItemSliding key={item.id}>
+            <IonItemSliding key={item.id} className="animated-list-item">
               <IonItem button detail={false} onClick={() => router.push(`/items/${item.id}`)}>
+                {/* Photo Thumbnail */}
+                <ReceiptThumbnail 
+                  localPath={item.localPhotoPath}
+                  photoUrl={item.photoUrl}
+                  isPendingUpload={item._photoSyncStatus === 'pending'}
+                />
+
                 <IonIcon
                   slot="start"
                   icon={item.isCompleted ? checkmarkCircleOutline : timeOutline}
                   color={item.isCompleted ? 'success' : 'warning'}
-                  style={{ fontSize: '24px' }}
+                  style={{ fontSize: '24px', marginRight: 8 }}
                 />
+
                 <IonLabel>
                   <h2><strong>{item.serviceName}</strong></h2>
                   <p>
@@ -205,11 +232,24 @@ const ItemsList: React.FC = () => {
                   <p style={{ fontSize: '0.85em', color: '#666' }}>
                     Date: {item.serviceDate}
                   </p>
+
+                  {/* Location Preview */}
+                  {item.location && (
+                    <div style={{ marginTop: 4 }}>
+                      <LocationPreview location={item.location} serviceName={item.serviceName} />
+                    </div>
+                  )}
                 </IonLabel>
 
                 {/* pending sync badge for items created/modified offline */}
                 {item._syncStatus === 'pending' ? (
-                  <IonBadge slot="end" color="warning" style={{ marginRight: '8px' }}>
+                  <IonBadge
+                    ref={pulseBadgeRef}
+                    className="pulse-badge"
+                    slot="end"
+                    color="warning"
+                    style={{ marginRight: '8px' }}
+                  >
                     <IonIcon icon={alertCircleOutline} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
                     Pending Sync
                   </IonBadge>
@@ -222,7 +262,6 @@ const ItemsList: React.FC = () => {
                     {item.isCompleted ? 'Completed' : 'Scheduled'}
                   </IonBadge>
                 )}
-
                 <IonIcon slot="end" icon={chevronForwardOutline} color="medium" />
               </IonItem>
 
@@ -235,19 +274,16 @@ const ItemsList: React.FC = () => {
           ))}
         </IonList>
 
-        {/* Infinite Scroll */}
         <IonInfiniteScroll onIonInfinite={handleInfinite} threshold="100px" disabled={!hasMore}>
           <IonInfiniteScrollContent loadingSpinner="bubbles" loadingText="Loading more records..." />
         </IonInfiniteScroll>
 
-        {/* Floating Action Button */}
         <IonFab vertical="bottom" horizontal="end" slot="fixed" style={{ margin: '16px' }}>
           <IonFabButton onClick={() => router.push('/items/new')}>
             <IonIcon icon={add} />
           </IonFabButton>
         </IonFab>
 
-        {/* Real-time Toast Notifications */}
         <IonToast
           isOpen={!!notification}
           message={notification || ''}

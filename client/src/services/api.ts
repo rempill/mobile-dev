@@ -49,6 +49,11 @@ export const itemApi = {
     await apiClient.delete(`/items/${id}`);
   },
 
+  async deletePhoto(id: string): Promise<ServiceItem> {
+    const res = await apiClient.delete<ServiceItem>(`/items/${id}/photo`);
+    return res.data;
+  },
+
   async login(email: string, pass: string): Promise<{ token: string; user: any }> {
     const res = await axios.post(`${API_BASE_URL}/auth/login`, {
       email,

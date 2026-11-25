@@ -13,10 +13,13 @@ export interface ServiceItem{
     category:string; // e.g. "Maintenance", "Repair"
     isCompleted: boolean;
     location?: LocationCoordinates | undefined;
+    // Versioned, JWT-protected URL: /api/items/:id/photo?v=<epochMs>. Never expose disk path.
+    photoUrl?: string | undefined;
     createdAt?: string | undefined;
 }
 
-export type CreateServiceItemDto=Omit<ServiceItem,'id'|'userId'|'createdAt'>;
+// photoUrl is server-controlled: it can only change through /photo endpoints
+export type CreateServiceItemDto=Omit<ServiceItem,'id'|'userId'|'createdAt'|'photoUrl'>;
 export type UpdateServiceItemDto=Partial<CreateServiceItemDto>;
 
 export interface PaginatedResult<T>{

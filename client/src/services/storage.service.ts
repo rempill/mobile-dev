@@ -9,6 +9,13 @@ export interface SyncQueueItem {
   timestamp: number;
 }
 
+export interface PhotoIndexEntry{
+  localPath:string;
+  status:'pending' | 'synced';
+  remoteUrl?: string;
+  updatedAt: number;
+}
+
 class StorageService {
   private storage: Storage | null = null;
   private isReady = false;
@@ -77,6 +84,27 @@ class StorageService {
   async clear(): Promise<void> {
     const store = await this.getStore();
     await store.clear();
+  }
+
+  // Photos
+  async getPhotoIndex(): Promise<Record<string, PhotoIndexEntry>> {
+    const store= await this.getStore();
+    const raw= await store.get('PHOTO_INDEX');
+    return raw ? JSON.parse(raw) : {};
+  }
+
+  async setPhotoIndexEntry(itemId:string, entry:PhotoIndexEntry):Promise<void>{
+    const index= await this.getPhotoIndex();
+    index[itemId]=entry;
+    const store=await this.getStore();
+    await store.set('PHOTO_INDEX', JSON.stringify(index));
+  }
+
+  async removePhotoIndexEntry(itemId:string):Promise<void>{
+    const index=await this.getPhotoIndex();
+    delete index[itemId];
+    const store=await this.getStore();
+    await store.set('PHOTO_INDEX', JSON.stringify(index));
   }
 
   // cached items persistence

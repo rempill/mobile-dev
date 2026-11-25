@@ -146,6 +146,9 @@ capacitor.internal.json
 *.db-wal
 dump.rdb
 
+# Uploaded receipt photos (server-side storage)
+/server/uploads/
+
 # ------------------------------------------------------------------------------
 # 8. Operating System & Filesystem Junk
 # ------------------------------------------------------------------------------

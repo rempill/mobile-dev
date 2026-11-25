@@ -13,10 +13,17 @@ export interface ServiceItem {
   category: string;
   isCompleted: boolean;
   location?: LocationCoordinates;
+  createdAt?: string;
+  // Server-managed, JWT-protected, versioned URL
+  photoUrl?: string;
+  // CLIENT-ONLY: Capacitor Filesystem path relative to Directory.Data (e.g. pitstop-photos/receipt-123.jpg)
+  localPhotoPath?: string;
+  // CLIENT-ONLY: photo upload state
+  _photoSyncStatus?: 'synced' | 'pending';
   _syncStatus?: 'synced' | 'pending'; // flag for items queued offline
 }
 
-export type CreateServiceItemDto = Omit<ServiceItem, 'id' | 'userId' | '_syncStatus'>;
+export type CreateServiceItemDto = Omit<ServiceItem, 'id' | 'userId' | 'createdAt' | 'photoUrl' | 'localPhotoPath' | '_syncStatus' | '_photoSyncStatus'>;
 export type UpdateServiceItemDto = Partial<CreateServiceItemDto>;
 
 export interface PaginatedResult<T> {

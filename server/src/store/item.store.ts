@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import type { CreateServiceItemDto, ServiceItem, PaginatedResult, UpdateServiceItemDto } from '../types/item.types.js';
+import { runMigrations } from './migrations.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +42,9 @@ db.exec(`
     createdAt TEXT NOT NULL
   );
 `);
+
+// Incremental schema changes
+runMigrations(db);
 
 // Seed default users if table is empty
 const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
@@ -110,8 +114,27 @@ interface ServiceItemRow {
   isCompleted: number;
   locationLat: number | null;
   locationLng: number | null;
+  photoPath: string | null;
+  photoMimeType: string | null;
+  photoUpdatedAt: string | null;
   createdAt: string;
 }
+
+export interface PhotoFileRecord{
+  photoPath: string;
+  photoMimeType: string;
+}
+
+export interface PhotoMutationResult{
+  item:ServiceItem;
+  previousPhotoPath: string | null;
+}
+
+const ITEM_COLUMNS=
+'id, userId, serviceName, cost, mileage, serviceDate, category, isCompleted, locationLat, locationLng, photoPath, photoMimeType, photoUpdatedAt, createdAt';
+
+// upload timestamp so clients re-download only when photo changed
+export const buildPhotoUrl=(id: string, photoUpdatedAt: string):string =>`/api/items/${encodeURIComponent(id)}/photo?v=${Date.parse(photoUpdatedAt || '0')}`;
 
 function mapRowToServiceItem(row: ServiceItemRow): ServiceItem {
   return {
@@ -129,6 +152,7 @@ function mapRowToServiceItem(row: ServiceItemRow): ServiceItem {
         lng: row.locationLng
       }
     } : {}),
+    ...(row.photoPath && row.photoUpdatedAt ? {photoUrl: buildPhotoUrl(row.id,row.photoUpdatedAt)}: {}),
     createdAt: row.createdAt
   };
 }
@@ -161,25 +185,21 @@ class ItemStore {
     const whereSql = `WHERE ${whereClauses.join(' AND ')}`;
 
     // Total count query
-    const countStmt = db.prepare(`SELECT COUNT(*) as count FROM service_items ${whereSql}`);
-    const countRow = countStmt.get(...params) as { count: number };
+    const countRow = db.prepare(`SELECT COUNT(*) as count FROM service_items ${whereSql}`).get(...params) as {count:number};
     const total = countRow.count;
     const totalPages = Math.ceil(total / safeLimit) || 1;
 
     // Paginated items query
-    const dataSql = `
-      SELECT id, userId, serviceName, cost, mileage, serviceDate, category, isCompleted, locationLat, locationLng, createdAt
-      FROM service_items
-      ${whereSql}
+    const rows=db.prepare(
+      `SELECT ${ITEM_COLUMNS} FROM service_items 
+      ${whereSql} 
       ORDER BY serviceDate DESC, createdAt DESC
-      LIMIT ? OFFSET ?
-    `;
-    const dataStmt = db.prepare(dataSql);
-    const rows = dataStmt.all(...params, safeLimit, offset) as ServiceItemRow[];
-    const data = rows.map(mapRowToServiceItem);
+      LIMIT ? OFFSET ?`
+    )
+    .all(...params, safeLimit,offset) as ServiceItemRow[];
 
     return {
-      data,
+      data:rows.map(mapRowToServiceItem),
       pagination: {
         total,
         page: safePage,
@@ -191,12 +211,9 @@ class ItemStore {
   }
 
   getById(id: string, userId: string): ServiceItem | undefined {
-    const stmt = db.prepare(`
-      SELECT id, userId, serviceName, cost, mileage, serviceDate, category, isCompleted, locationLat, locationLng, createdAt
-      FROM service_items
-      WHERE id = ? AND userId = ?
-    `);
-    const row = stmt.get(id, userId) as ServiceItemRow | undefined;
+    const row = db
+      .prepare(`SELECT ${ITEM_COLUMNS} FROM service_items WHERE id = ? AND userId = ?`)
+      .get(id, userId) as ServiceItemRow | undefined;
     return row ? mapRowToServiceItem(row) : undefined;
   }
 
@@ -209,9 +226,9 @@ class ItemStore {
     const serviceDate = dto.serviceDate ? dto.serviceDate : today;
     const category = dto.category || 'Maintenance';
     const isCompleted = dto.isCompleted ? 1 : 0;
-    const location = dto.location ?? { lat: 0, lng: 0 };
-    const locationLat = location.lat ?? null;
-    const locationLng = location.lng ?? null;
+    const location = dto.location;
+    const locationLat = location ? location.lat : null;
+    const locationLng = location ? location.lng : null;
     const createdAt = new Date().toISOString();
 
     const stmt = db.prepare(`
@@ -229,7 +246,7 @@ class ItemStore {
       serviceDate,
       category,
       isCompleted: Boolean(isCompleted),
-      location,
+      ...(location ? {location}:{}),
       createdAt
     };
   }
@@ -271,6 +288,48 @@ class ItemStore {
     const stmt = db.prepare('DELETE FROM service_items WHERE id = ? AND userId = ?');
     const result = stmt.run(id, userId);
     return result.changes > 0;
+  }
+
+  // Photo metadata
+  getPhotoFile(id:string, userId:string): PhotoFileRecord | undefined{
+    const row=db
+      .prepare('SELECT photoPath, photoMimeType FROM service_items WHERE id = ? AND userId = ?')
+      .get(id,userId) as {photoPath:string | null; photoMimeType:string | null} | undefined;
+      if(!row || !row.photoPath) return undefined;
+      return {photoPath: row.photoPath,photoMimeType:row.photoMimeType ?? 'image/jpeg'};            
+  }
+
+  setPhoto(id:string, userId:string, photoPath:string, photoMimeType:string): PhotoMutationResult | null{
+    const tx=db.transaction(():PhotoMutationResult | null => {
+      const prev=db
+        .prepare('SELECT photoPath FROM service_items WHERE id = ? AND userId=?')
+        .get(id,userId) as {photoPath:string | null} | undefined;
+        if(!prev) return null;
+
+        db.prepare('UPDATE service_items SET photoPath = ?, photoMimeType = ?, photoUpdatedAt=? WHERE id=? AND userId=?')
+          .run(photoPath,photoMimeType,new Date().toISOString(),id,userId);
+
+        const item=this.getById(id,userId);
+        return item ? {item,previousPhotoPath:prev.photoPath} : null;
+    });
+    return tx();
+  }
+
+  clearPhoto(id:string, userId:string): PhotoMutationResult | null{
+    const tx=db.transaction(():PhotoMutationResult | null =>{
+      const prev = db
+        .prepare('SELECT photoPath FROM service_items WHERE id=? AND userId=?')
+        .get(id,userId) as {photoPath:string | null} | undefined;
+        if(!prev) return null;
+
+        db.prepare(
+          'UPDATE service_items SET photoPath = NULL, photoMimeType = NULL, photoUpdatedAt = NULL WHERE id = ? AND userId = ?'
+        ).run(id,userId);
+
+        const item=this.getById(id,userId);
+        return item ? {item,previousPhotoPath:prev.photoPath}:null;
+    });
+    return tx();
   }
 }
 

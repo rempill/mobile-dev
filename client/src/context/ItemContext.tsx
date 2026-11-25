@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { Network } from '@capacitor/network';
-import { ServiceItem, CreateServiceItemDto, UpdateServiceItemDto, WsMessage, User } from '../types/item.types';
+import { ServiceItem, CreateServiceItemDto, UpdateServiceItemDto, WsMessage, User, LocationCoordinates } from '../types/item.types';
 import { itemApi } from '../services/api';
 import { wsClient } from '../services/websocket';
 import { storageService } from '../services/storage.service';
+import { photoService } from '../services/photo.service';
 
 interface ItemContextType {
   items: ServiceItem[];
@@ -31,10 +32,10 @@ interface ItemContextType {
   setCategory: (cat: string) => void;
   loadMoreItems: () => Promise<void>;
   refreshItems: () => Promise<void>;
-  // crud
+  // CRUD operations
   getItem: (id: string) => Promise<ServiceItem | undefined>;
-  addItem: (item: CreateServiceItemDto) => Promise<ServiceItem>;
-  editItem: (id: string, item: UpdateServiceItemDto) => Promise<ServiceItem>;
+  addItem: (item: CreateServiceItemDto, localPhotoPath?: string) => Promise<ServiceItem>;
+  editItem: (id: string, item: UpdateServiceItemDto, localPhotoPath?: string, removePhoto?: boolean) => Promise<ServiceItem>;
   removeItem: (id: string) => Promise<void>;
 }
 
@@ -50,6 +51,7 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // network & sync state
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+  const isSyncingRef = useRef(false);
 
   // auth State
   const [user, setUser] = useState<User | null>(null);
@@ -62,23 +64,36 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearNotification = () => setNotification(null);
 
+  // merge items with local PHOTO_INDEX
+  const mergeWithPhotoIndex = useCallback(async (list:ServiceItem[]): Promise<ServiceItem[]> =>{
+    const photoIndex=await storageService.getPhotoIndex();
+    return list.map((item) => {
+      const p = photoIndex[item.id];
+      if(p){
+        return {
+          ...item,
+          localPhotoPath:p.localPath,
+          _photoSyncStatus:p.status
+        };
+      }
+      return item;
+    });
+  },[]);
+
   // init network status and register real-time listener
   useEffect(() => {
-    let listenerHandle: any = null;
-
-    const setupNetwork = async () => {
+    let handle: any = null;
+    const setup = async () => {
       const status = await Network.getStatus();
       setIsOnline(status.connected);
 
-      listenerHandle = await Network.addListener('networkStatusChange', (s) => {
-        console.log('[Network] Status changed to:', s.connected ? 'ONLINE' : 'OFFLINE');
+      handle = await Network.addListener('networkStatusChange', (s) => {
         setIsOnline(s.connected);
       });
     };
-
-    setupNetwork();
+    setup();
     return () => {
-      if (listenerHandle) listenerHandle.remove();
+      if (handle) handle.remove();
     };
   }, []);
 
@@ -90,9 +105,6 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const storedUser = await storageService.getUser();
         if (token && storedUser) {
           setUser(storedUser);
-          wsClient.connect();
-        } else if (token) {
-          setUser({ id: 'user', email: 'user@pitstop.com' });
           wsClient.connect();
         }
         const queue = await storageService.getSyncQueue();
@@ -115,25 +127,28 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (isOnline) {
           const res = await itemApi.getAll(targetPage, 10, searchQuery, category);
+          const merged= await mergeWithPhotoIndex(res.data);
+
           if (append) {
             setItems((prev) => {
               const existingIds = new Set(prev.map((i) => i.id));
-              const newUnique = res.data.filter((i) => !existingIds.has(i.id));
-              return [...prev, ...newUnique];
+              return [...prev, ...merged.filter((i)=> !existingIds.has(i.id))];
             });
           } else {
-            setItems(res.data);
+            setItems(merged);
           }
+
           setPage(targetPage);
           setHasMore(res.pagination.hasMore);
 
           // update local cache on fresh page 1 load
           if (targetPage === 1 && !searchQuery && category === 'all') {
-            await storageService.setCachedItems(res.data);
+            await storageService.setCachedItems(merged);
           }
         } else {
           // offline fallback
           let cached = await storageService.getCachedItems();
+          cached=await mergeWithPhotoIndex(cached);
 
           if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
@@ -150,13 +165,13 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (err: any) {
         setError(err.message || 'Failed to fetch items');
         // fallback to cache on network failure
-        const cached = await storageService.getCachedItems();
+        const cached=await mergeWithPhotoIndex(await storageService.getCachedItems());
         setItems(cached);
       } finally {
         setLoading(false);
       }
     },
-    [isOnline, searchQuery, category]
+    [isOnline, searchQuery, category, mergeWithPhotoIndex]
   );
 
   // trigger fetch when search or category changes, only when authenticated
@@ -168,42 +183,94 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // auto-flush offline sync queue when returning online
   const syncPendingQueue = useCallback(async () => {
-    const queue = await storageService.getSyncQueue();
-    if (queue.length === 0) return;
+    if(isSyncingRef.current) return;
+    isSyncingRef.current=true;
 
-    setNotification(`Reconnected: Syncing ${queue.length} offline records...`);
+    try{
+      const queue = await storageService.getSyncQueue();
+      if (queue.length === 0) return;
 
-    for (const task of queue) {
-      try {
-        if (task.operation === 'CREATE') {
-          // Strip temporary local ID (temp-xxx) and local sync metadata (_syncStatus)
-          const { id, _syncStatus, ...createPayload } = task.payload || {};
-          await itemApi.create(createPayload);
-          if (id) {
-            setItems((prev) => prev.filter((i) => i.id !== id));
+      setNotification(`Syncing ${queue.length} offline records...`);
+      const tempIdMap: Record<string,string>={};
+
+      for (const task of queue) {
+        try {
+          if (task.operation === 'CREATE') {
+            const { id: tempId, localPhotoPath, _syncStatus, _photoSyncStatus, ...payload } = task.payload || {};
+            const created = await itemApi.create(payload);
+
+            if (tempId) {
+              tempIdMap[tempId] = created.id;
+              // Remap photo index
+              const pIndex = await storageService.getPhotoIndex();
+              if (pIndex[tempId]) {
+                await storageService.setPhotoIndexEntry(created.id, pIndex[tempId]);
+                await storageService.removePhotoIndexEntry(tempId);
+              }
+            }
+
+            // Upload pending photo if present
+            if (localPhotoPath) {
+              try {
+                await photoService.uploadPhotoFile(created.id, localPhotoPath);
+                await storageService.setPhotoIndexEntry(created.id, {
+                  localPath: localPhotoPath,
+                  status: 'synced',
+                  updatedAt: Date.now()
+                });
+              } catch (photoErr) {
+                console.warn('Failed to upload photo for created item:', photoErr);
+              }
+            }
+          } else if (task.operation === 'UPDATE') {
+            let itemId = task.payload?.id;
+            if (itemId && tempIdMap[itemId]) itemId = tempIdMap[itemId];
+
+            const { id, localPhotoPath, _syncStatus, _photoSyncStatus, _photoRemoved, ...payload } = task.payload || {};
+            if (itemId && !itemId.startsWith('temp-')) {
+              await itemApi.update(itemId, payload);
+              if (_photoRemoved) {
+                try {
+                  await itemApi.deletePhoto(itemId);
+                  await storageService.removePhotoIndexEntry(itemId);
+                } catch (photoErr) {
+                  console.warn('Failed to delete photo during sync:', photoErr);
+                }
+              } else if (localPhotoPath) {
+                try {
+                  await photoService.uploadPhotoFile(itemId, localPhotoPath);
+                  await storageService.setPhotoIndexEntry(itemId, {
+                    localPath: localPhotoPath,
+                    status: 'synced',
+                    updatedAt: Date.now()
+                  });
+                } catch (photoErr) {
+                  console.warn('Failed to sync updated photo:', photoErr);
+                }
+              }
+            }
+          } else if (task.operation === 'DELETE') {
+            let itemId = task.payload?.id;
+            if (itemId && tempIdMap[itemId]) itemId = tempIdMap[itemId];
+
+            if (itemId && !itemId.startsWith('temp-')) {
+              await itemApi.delete(itemId);
+              await storageService.removePhotoIndexEntry(itemId);
+            }
           }
-        } else if (task.operation === 'UPDATE') {
-          // Strip local sync metadata (_syncStatus)
-          const { _syncStatus, ...updatePayload } = task.payload || {};
-          const itemId = updatePayload.id || task.payload?.id;
-          if (itemId && !itemId.startsWith('temp-')) {
-            await itemApi.update(itemId, updatePayload);
-          }
-        } else if (task.operation === 'DELETE') {
-          const itemId = task.payload?.id;
-          if (itemId && !itemId.startsWith('temp-')) {
-            await itemApi.delete(itemId);
-          }
+
+          await storageService.removeSyncQueueItem(task.queueId);
+        } catch (e) {
+          console.error('Failed to sync queue task:', task, e);
         }
-        await storageService.removeSyncQueueItem(task.queueId);
-      } catch (e) {
-        console.error('Failed to sync item:', task, e);
       }
+      const remaining = await storageService.getSyncQueue();
+      setPendingSyncCount(remaining.length);
+      setNotification('Offline sync complete! Cloud database updated.');
+      await fetchItems(1, false);
+    } finally {
+      isSyncingRef.current = false;
     }
-
-    setPendingSyncCount(0);
-    setNotification('Offline sync complete! Cloud database is up to date.');
-    await fetchItems(1, false);
   }, [fetchItems]);
 
   useEffect(() => {
@@ -216,31 +283,191 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!user || !isOnline) return;
 
-    const unsubscribe = wsClient.subscribe((msg: WsMessage<any>) => {
+    const unsubscribe = wsClient.subscribe(async (msg: WsMessage<any>) => {
       if (msg.event === 'ITEM_CREATED') {
-        const newItem: ServiceItem = msg.payload;
-        setItems((prev) => (prev.some((i) => i.id === newItem.id) ? prev : [newItem, ...prev]));
-        setNotification(`Real-time update: Added "${newItem.serviceName}"`);
+        const [merged] = await mergeWithPhotoIndex([msg.payload]);
+        setItems((prev) => (prev.some((i) => i.id === merged.id) ? prev : [merged, ...prev]));
+        setNotification(`Added: "${merged.serviceName}"`);
       } else if (msg.event === 'ITEM_UPDATED') {
-        const updatedItem: ServiceItem = msg.payload;
-        setItems((prev) => prev.map((i) => (i.id === updatedItem.id ? updatedItem : i)));
-        setNotification(`Real-time update: Updated "${updatedItem.serviceName}"`);
+        const [merged] = await mergeWithPhotoIndex([msg.payload]);
+        setItems((prev) => prev.map((i) => (i.id === merged.id ? merged : i)));
       } else if (msg.event === 'ITEM_DELETED') {
-        const { id } = msg.payload;
-        setItems((prev) => prev.filter((i) => i.id !== id));
-        setNotification('Real-time update: Service item removed');
+        setItems((prev) => prev.filter((i) => i.id !== msg.payload.id));
       }
     });
 
     return () => {
       unsubscribe();
     };
-  }, [user, isOnline]);
+  }, [user, isOnline, mergeWithPhotoIndex]);
 
-  // pagination: load next page
-  const loadMoreItems = async () => {
-    if (!hasMore || loading) return;
-    await fetchItems(page + 1, true);
+  // crud with online/offline branching
+  const getItem = useCallback(
+    async (id: string): Promise<ServiceItem | undefined> => {
+      const found = items.find((i) => i.id === id);
+      if (found) return found;
+      if (isOnline) {
+        const item = await itemApi.getById(id);
+        const [merged] = await mergeWithPhotoIndex([item]);
+        return merged;
+      }
+      return undefined;
+    },
+    [items, isOnline, mergeWithPhotoIndex]
+  );
+
+ const addItem = async (dto: CreateServiceItemDto, localPhotoPath?: string): Promise<ServiceItem> => {
+    if (isOnline) {
+      try {
+        const created = await itemApi.create(dto);
+        if (localPhotoPath) {
+          try {
+            await photoService.uploadPhotoFile(created.id, localPhotoPath);
+            await storageService.setPhotoIndexEntry(created.id, {
+              localPath: localPhotoPath,
+              status: 'synced',
+              updatedAt: Date.now()
+            });
+            created.localPhotoPath = localPhotoPath;
+            created._photoSyncStatus = 'synced';
+          } catch {
+            await storageService.setPhotoIndexEntry(created.id, {
+              localPath: localPhotoPath,
+              status: 'pending',
+              updatedAt: Date.now()
+            });
+            await storageService.addToSyncQueue('UPDATE', `/items/${created.id}`, {
+              ...created,
+              localPhotoPath
+            });
+          }
+        }
+        setItems((prev) => [created, ...prev]);
+        return created;
+      } catch (err) {
+        console.warn('Network create failed, falling back to offline mode');
+      }
+    }
+
+    // Offline mode
+    const tempId = `temp-${Date.now()}`;
+    const offlineItem: ServiceItem = {
+      ...dto,
+      id: tempId,
+      localPhotoPath,
+      _syncStatus: 'pending',
+      _photoSyncStatus: localPhotoPath ? 'pending' : undefined
+    };
+
+    if (localPhotoPath) {
+      await storageService.setPhotoIndexEntry(tempId, {
+        localPath: localPhotoPath,
+        status: 'pending',
+        updatedAt: Date.now()
+      });
+    }
+
+    await storageService.addToSyncQueue('CREATE', '/items', offlineItem);
+    setPendingSyncCount((prev) => prev + 1);
+    setItems((prev) => [offlineItem, ...prev]);
+    return offlineItem;
+  };
+
+  // edit
+  const editItem = async (
+    id: string,
+    dto: UpdateServiceItemDto,
+    localPhotoPath?: string,
+    removePhoto?: boolean
+  ): Promise<ServiceItem> => {
+    if (isOnline && !id.startsWith('temp-')) {
+      try {
+        let updated = await itemApi.update(id, dto);
+        if (removePhoto) {
+          try {
+            updated = await itemApi.deletePhoto(id);
+          } catch (e) {
+            console.warn('Failed to delete photo on server:', e);
+          }
+          await storageService.removePhotoIndexEntry(id);
+          updated.photoUrl = undefined;
+          updated.localPhotoPath = undefined;
+          updated._photoSyncStatus = undefined;
+        } else if (localPhotoPath) {
+          await photoService.uploadPhotoFile(id, localPhotoPath);
+          await storageService.setPhotoIndexEntry(id, {
+            localPath: localPhotoPath,
+            status: 'synced',
+            updatedAt: Date.now()
+          });
+          updated.localPhotoPath = localPhotoPath;
+        }
+        setItems((prev) =>
+          prev.map((i) =>
+            i.id === id
+              ? {
+                  ...updated,
+                  ...(removePhoto ? { photoUrl: undefined, localPhotoPath: undefined, _photoSyncStatus: undefined } : {})
+                }
+              : i
+          )
+        );
+        return updated;
+      } catch (e) {
+        console.warn('Online update failed, saving offline task');
+      }
+    }
+
+    const current = items.find((i) => i.id === id);
+    const updated: ServiceItem = {
+      ...(current as ServiceItem),
+      ...dto,
+      id,
+      localPhotoPath: removePhoto ? undefined : (localPhotoPath ?? current?.localPhotoPath),
+      photoUrl: removePhoto ? undefined : current?.photoUrl,
+      _syncStatus: 'pending',
+      _photoSyncStatus: removePhoto ? undefined : (localPhotoPath ? 'pending' : current?._photoSyncStatus)
+    };
+
+    if (removePhoto) {
+      await storageService.removePhotoIndexEntry(id);
+      if (current?.localPhotoPath) {
+        await photoService.deleteLocalPhoto(current.localPhotoPath);
+      }
+    } else if (localPhotoPath) {
+      await storageService.setPhotoIndexEntry(id, {
+        localPath: localPhotoPath,
+        status: 'pending',
+        updatedAt: Date.now()
+      });
+    }
+
+    await storageService.addToSyncQueue('UPDATE', `/items/${id}`, {
+      ...updated,
+      _photoRemoved: removePhoto
+    });
+    setPendingSyncCount((prev) => prev + 1);
+    setItems((prev) => prev.map((i) => (i.id === id ? updated : i)));
+    return updated;
+  };
+
+  // remove
+  const removeItem = async (id: string): Promise<void> => {
+    if (isOnline && !id.startsWith('temp-')) {
+      try {
+        await itemApi.delete(id);
+        await storageService.removePhotoIndexEntry(id);
+        setItems((prev) => prev.filter((i) => i.id !== id));
+        return;
+      } catch (e) {
+        console.warn('Delete online failed, enqueuing offline task');
+      }
+    }
+
+    await storageService.addToSyncQueue('DELETE', `/items/${id}`, { id });
+    await storageService.removePhotoIndexEntry(id);
+    setPendingSyncCount((prev) => prev + 1);
+    setItems((prev) => prev.filter((i) => i.id !== id));
   };
 
   // auth: Login
@@ -271,85 +498,10 @@ export const ItemProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setItems([]);
   };
 
-  // crud with online/offline branching
-  const getItem = async (id: string): Promise<ServiceItem | undefined> => {
-    const cached = items.find((i) => i.id === id);
-    if (cached) return cached;
-    if (isOnline) return await itemApi.getById(id);
-    return undefined;
-  };
-
-  const addItem = async (dto: CreateServiceItemDto): Promise<ServiceItem> => {
-    if (isOnline) {
-      try {
-        const created = await itemApi.create(dto);
-        setItems((prev) => (prev.some((i) => i.id === created.id) ? prev : [created, ...prev]));
-        const cached = await storageService.getCachedItems();
-        if (!cached.some((i) => i.id === created.id)) {
-          await storageService.setCachedItems([created, ...cached]);
-        }
-        return created;
-      } catch (e) {
-        console.warn('Network call failed, falling back to offline queue');
-      }
-    }
-
-    // offline optimistic add
-    const offlineItem: ServiceItem = {
-      ...dto,
-      id: `temp-${Date.now()}`,
-      _syncStatus: 'pending'
-    };
-    await storageService.addToSyncQueue('CREATE', '/items', offlineItem);
-    setPendingSyncCount((prev) => prev + 1);
-    setItems((prev) => (prev.some((i) => i.id === offlineItem.id) ? prev : [offlineItem, ...prev]));
-
-    const cached = await storageService.getCachedItems();
-    await storageService.setCachedItems([offlineItem, ...cached.filter((i) => i.id !== offlineItem.id)]);
-
-    return offlineItem;
-  };
-
-  // edit
-  const editItem = async (id: string, dto: UpdateServiceItemDto): Promise<ServiceItem> => {
-    if (isOnline) {
-      try {
-        const updated = await itemApi.update(id, dto);
-        setItems((prev) => prev.map((i) => (i.id === id ? updated : i)));
-        return updated;
-      } catch (e) {
-        console.warn('Network call failed, enqueuing update');
-      }
-    }
-
-    const current = items.find((i) => i.id === id);
-    const updated: ServiceItem = {
-      ...(current as ServiceItem),
-      ...dto,
-      id,
-      _syncStatus: 'pending'
-    };
-    await storageService.addToSyncQueue('UPDATE', `/items/${id}`, updated);
-    setPendingSyncCount((prev) => prev + 1);
-    setItems((prev) => prev.map((i) => (i.id === id ? updated : i)));
-    return updated;
-  };
-
-  // remove
-  const removeItem = async (id: string): Promise<void> => {
-    if (isOnline) {
-      try {
-        await itemApi.delete(id);
-        setItems((prev) => prev.filter((i) => i.id !== id));
-        return;
-      } catch (e) {
-        console.warn('Delete failed online, enqueuing delete');
-      }
-    }
-
-    await storageService.addToSyncQueue('DELETE', `/items/${id}`, { id });
-    setPendingSyncCount((prev) => prev + 1);
-    setItems((prev) => prev.filter((i) => i.id !== id));
+  // pagination: load next page
+  const loadMoreItems = async () => {
+    if (!hasMore || loading) return;
+    await fetchItems(page + 1, true);
   };
 
   return (

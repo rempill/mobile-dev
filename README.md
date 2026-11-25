@@ -17,8 +17,11 @@ Each service record includes:
 * `category` (String): Service classification (`"Maintenance"`, `"Repair"`, `"Inspection"`).
 * `isCompleted` (Boolean): Service completion status (scheduled vs. completed).
 * `location` (Object): `{ lat: number, lng: number }` coordinates for the repair shop map pin.
+* `photoUrl` (String, Optional): Server-managed, JWT-protected, versioned URL for the uploaded receipt photo.
+* `localPhotoPath` (String, Client-only): Capacitor Filesystem path relative to `Directory.Data` (`pitstop-photos/...`) for offline receipt caching.
 * `createdAt` (ISO Date String): Server timestamp of record creation.
 * `_syncStatus` (String, Client-only): Optimistic sync state (`"synced"` or `"pending"`) for items queued while offline.
+* `_photoSyncStatus` (String, Client-only): Receipt photo upload state (`"synced"` or `"pending"`).
 
 ### 2. Authentication & Data Isolation
 * **JWT Authentication:** Secure user signup (`/api/auth/register`) and login (`/api/auth/login`) with JSON Web Tokens.
@@ -29,8 +32,8 @@ Each service record includes:
 ### 3. Offline-First & Background Sync
 * **Local Persistent Storage:** Offline caching of service records and auth credentials powered by `@ionic/storage` (`_pitstop_storage`).
 * **Real-time Connectivity Monitoring:** Live network status detection using `@capacitor/network`, surfaced via an interactive status chip in the app header (`Online` / `Offline`).
-* **Optimistic Offline CRUD:** Create, update, and delete service records while offline. Offline mutations are enqueued into a persistent `SYNC_QUEUE` with immediate UI updates and visual "Pending Sync" badges.
-* **Automated Reconciliation:** Automatic queue synchronization and cache refresh as soon as network connectivity is restored, accompanied by non-intrusive toast notifications.
+* **Optimistic Offline CRUD:** Create, update, and delete service records (including capturing receipt photos) while offline. Offline mutations are enqueued into a persistent `SYNC_QUEUE` with immediate UI updates and visual "Pending Sync" badges.
+* **Automated Reconciliation:** Automatic queue synchronization, pending receipt photo uploads, and cache refresh as soon as network connectivity is restored, accompanied by non-intrusive toast notifications.
 
 ### 4. Real-Time Synchronization (WebSockets)
 * **Authenticated WebSocket Connection:** Handshake-level JWT validation over `ws://localhost:4000/ws?token=<token>`.
@@ -43,9 +46,11 @@ Each service record includes:
 * **Category Filtering:** Filter items by category (`All`, `Maintenance`, `Repair`, `Inspection`).
 * **Infinite Scroll & Refresh:** Server-side paginated queries (`page`, `limit`, `total`, `totalPages`, `hasMore`) with smooth mobile infinite scrolling (`IonInfiniteScroll`) and pull-to-refresh (`IonRefresher`).
 
-### 6. Native Capabilities & UI Animations
-* **Native Bridges:** Hardware camera integration (`@capacitor/camera`) to photograph invoices/receipts and haptics (`@capacitor/haptics`).
-* **Fluid UI/UX:** Mobile swipe gestures (`IonItemSliding`), expanding card animations, contextual badges, floating action buttons, and responsive dark mode support.
+### 6. Native Capabilities, Maps & UI Animations
+* **Receipt Photo Capture & Storage:** Hardware camera and gallery integration (`@capacitor/camera`) paired with persistent local caching (`@capacitor/filesystem`) and JWT-protected multipart uploads (`POST/GET/DELETE /api/items/:id/photo`).
+* **Interactive Maps & Native Directions:** Interactive repair shop pin selection and preview powered by `leaflet` / `react-leaflet`, GPS positioning via `@capacitor/geolocation`, and native turn-by-turn directions via `@capacitor/app-launcher` (`geo:` URI on Android with Google Maps web fallback).
+* **Custom UI Animations & Haptics:** Custom Ionic animations (`staggerListAnimation`, pulsing `Pending Sync` badges, custom page transitions, and spring/zoom modal animations), `@capacitor/haptics` feedback, swipe gestures (`IonItemSliding`), floating action buttons, and dark mode support.
+* **Native Android Project:** Configured `@capacitor/android` project (`client/android/`) ready for Android Studio / device deployment.
 
 ---
 
@@ -56,7 +61,8 @@ Each service record includes:
 * **Language:** TypeScript (~5.9)
 * **Build Tool:** Vite (v8)
 * **Routing:** React Router DOM (v6) with Ionic React Router
-* **Native Runtime:** Capacitor (v8) (`@capacitor/core`, `@capacitor/network`, `@capacitor/camera`, `@capacitor/haptics`, `@capacitor/preferences`)
+* **Native Runtime:** Capacitor (v8) (`@capacitor/core`, `@capacitor/android`, `@capacitor/camera`, `@capacitor/filesystem`, `@capacitor/geolocation`, `@capacitor/app-launcher`, `@capacitor/network`, `@capacitor/haptics`, `@capacitor/preferences`, `@capacitor/app`, `@capacitor/keyboard`, `@capacitor/status-bar`)
+* **Maps:** Leaflet (`leaflet`, `react-leaflet`)
 * **Storage:** `@ionic/storage` (IndexedDB / LocalStorage abstraction)
 * **HTTP Client:** Axios (configured with automatic JWT bearer interceptors)
 * **Icons:** Ionicons (v8)
@@ -65,7 +71,8 @@ Each service record includes:
 * **Runtime:** Node.js (ES Modules)
 * **Framework:** Express.js (v5)
 * **Language:** TypeScript with `tsx` / `ts-node-dev`
-* **Database:** SQLite via `better-sqlite3` (configured with WAL mode for performance)
+* **Database:** SQLite via `better-sqlite3` (configured with WAL mode & versioned schema migrations)
+* **File Uploads:** `multer` (multipart/form-data receipt photo uploads)
 * **Authentication:** JSON Web Tokens (`jsonwebtoken`)
 * **Real-Time Communication:** `ws` (WebSockets with authenticated handshake & heartbeat checks)
 * **CORS & Environment:** `cors`, `dotenv`
@@ -78,20 +85,24 @@ Each service record includes:
 mobile-dev/
 ├── package.json              # Monorepo root scripts (concurrent dev server execution)
 ├── client/                   # Frontend Ionic + React application
+│   ├── android/              # Capacitor Android native project
 │   ├── src/
+│   │   ├── components/       # UI components (MapPickerModal, LocationPreview, ReceiptPhotoField, ReceiptThumbnail)
 │   │   ├── context/          # React Context (ItemContext state, sync pipeline, WS events)
 │   │   ├── pages/            # View components (Login, ItemList, ItemDetail)
-│   │   ├── services/         # API (Axios), Storage (@ionic/storage), and WebSocket client
+│   │   ├── services/         # API (Axios), Storage (@ionic/storage), Photo, Location, and WebSocket clients
+│   │   ├── theme/            # Custom Ionic animations and styling
 │   │   ├── types/            # TypeScript data interfaces and DTOs
 │   │   └── App.tsx           # Route setup and authentication route guards
+│   ├── .env.example          # API origin configuration template (browser / emulator / device)
 │   ├── capacitor.config.ts   # Capacitor mobile configuration
 │   └── vite.config.ts        # Vite build configuration
 └── server/                   # Backend Express + SQLite server
     ├── src/
-    │   ├── controllers/      # REST endpoint controllers (CRUD & pagination)
+    │   ├── controllers/      # REST endpoint controllers (CRUD, pagination & photo uploads)
     │   ├── middleware/       # JWT authentication and route protection middleware
     │   ├── routes/           # Express route definitions (/api/items, /api/auth)
-    │   ├── store/            # SQLite database schema, user store, and service item store
+    │   ├── store/            # SQLite database schema, migrations, user store, and service item store
     │   ├── types/            # Backend types and WebSocket event definitions
     │   ├── ws/               # WebSocket server and scoped broadcast service
     │   └── index.ts          # Server entry point & HTTP/WS listener
@@ -142,6 +153,8 @@ Alternatively, you can run them individually:
   npm run client
   # Client runs on http://localhost:5173
   ```
+
+> **Note for Android / Physical Devices:** Copy `client/.env.example` to `client/.env` and set `VITE_API_ORIGIN` (`http://10.0.2.2:4000` for Android Emulator, or `http://<your-LAN-IP>:4000` for a physical device).
 
 ---
 
