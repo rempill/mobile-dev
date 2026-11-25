@@ -1,6 +1,6 @@
 # PitStop - Car Maintenance & Mileage Tracker
 
-PitStop is a native Android application (with a Node.js + SQLite backend) designed to help users track vehicle maintenance intervals, repair costs, and service history with offline-first capability and real-time cloud synchronization.
+PitStop is a native Android application (with a Node.js + SQLite backend) designed to help users track vehicle maintenance intervals, repair costs, and service history.
 
 ---
 
@@ -8,37 +8,24 @@ PitStop is a native Android application (with a Node.js + SQLite backend) design
 
 ### 1. Item Data Model
 Each service record includes:
-* `id` (String): Unique identifier (UUID) for database indexing and client routing.
-* `userId` (String): Unique user reference ensuring strict multi-tenant vehicle data isolation.
+* `id` (String): Unique identifier (UUID) for database indexing and client navigation.
+* `userId` (String): Unique user reference ensuring user data isolation.
 * `serviceName` (String): Description of the service (e.g., `"Oil & Filter Change"`).
 * `cost` (Numeric): Non-negative financial cost of the service (e.g., `85.50`).
 * `mileage` (Numeric): Vehicle odometer reading at the time of service (e.g., `124500`).
 * `serviceDate` (String / Date): Service date formatted as `YYYY-MM-DD`.
 * `category` (String): Service classification (`"Maintenance"`, `"Repair"`, `"Inspection"`).
 * `isCompleted` (Boolean): Service completion status (scheduled vs. completed).
-* `location` (Object): `{ lat: number, lng: number }` coordinates for the repair shop map pin.
-* `photoUrl` (String, Optional): Server-managed, JWT-protected, versioned URL for the uploaded receipt photo.
 * `createdAt` (ISO Date String): Server timestamp of record creation.
 
-### 2. Authentication & Data Isolation
-* **JWT Authentication:** Secure user signup (`/api/auth/register`) and login (`/api/auth/login`) with JSON Web Tokens.
-* **User Isolation:** All REST endpoints and WebSocket channels strictly isolate service items by authenticated user ID.
+### 2. Authentication (JWT)
+* **Login Page:** Authenticate users using JSON Web Tokens via `/api/auth/login` (and `/api/auth/register`).
+* **User Isolation:** REST endpoints isolate service items by the authenticated user ID.
 * _Android client implementation: TBD_
 
-### 3. Offline-First & Background Sync
-* _Android client implementation: TBD_
-
-### 4. Real-Time Synchronization (WebSockets)
-* **Authenticated WebSocket Connection:** Handshake-level JWT validation over `ws://localhost:4000/ws?token=<token>`.
-* **User-Scoped Events:** Real-time push events (`ITEM_CREATED`, `ITEM_UPDATED`, `ITEM_DELETED`) delivered exclusively to the active user's connected sessions.
-* **Resilient Connection:** 30-second ping/pong heartbeat to detect dropped sockets.
-* _Android client implementation: TBD_
-
-### 5. Search, Filtering & Pagination
-* **Server Queries:** Paginated queries (`page`, `limit`, `total`, `totalPages`, `hasMore`), search by name, and category filtering (`All`, `Maintenance`, `Repair`, `Inspection`).
-* _Android client implementation: TBD_
-
-### 6. Native Capabilities & UI
+### 3. Master-Detail User Interface (REST)
+* **List Page (Master):** Fetch and display the user's service items from the REST API (`/api/items`).
+* **Edit Page (Detail):** View, create, edit, and delete individual service items via REST endpoints (`/api/items`, `/api/items/:id`).
 * _Android client implementation: TBD_
 
 ---
@@ -52,10 +39,8 @@ Each service record includes:
 * **Runtime:** Node.js (ES Modules)
 * **Framework:** Express.js (v5)
 * **Language:** TypeScript with `tsx` / `ts-node-dev`
-* **Database:** SQLite via `better-sqlite3` (configured with WAL mode & versioned schema migrations)
-* **File Uploads:** `multer` (multipart/form-data receipt photo uploads)
+* **Database:** SQLite via `better-sqlite3`
 * **Authentication:** JSON Web Tokens (`jsonwebtoken`)
-* **Real-Time Communication:** `ws` (WebSockets with authenticated handshake & heartbeat checks)
 * **CORS & Environment:** `cors`, `dotenv`
 
 ---
@@ -67,13 +52,12 @@ mobile-dev/
 ├── package.json              # Root scripts for running the backend server
 └── server/                   # Backend Express + SQLite server
     ├── src/
-    │   ├── controllers/      # REST endpoint controllers (CRUD, pagination & photo uploads)
-    │   ├── middleware/       # JWT authentication and route protection middleware
+    │   ├── controllers/      # REST endpoint controllers
+    │   ├── middleware/       # JWT authentication middleware
     │   ├── routes/           # Express route definitions (/api/items, /api/auth)
     │   ├── store/            # SQLite database schema, migrations, user store, and service item store
-    │   ├── types/            # Backend types and WebSocket event definitions
-    │   ├── ws/               # WebSocket server and scoped broadcast service
-    │   └── index.ts          # Server entry point & HTTP/WS listener
+    │   ├── types/            # Backend types
+    │   └── index.ts          # Server entry point
     └── pitstop.db            # Persistent SQLite database file
 ```
 
@@ -84,7 +68,7 @@ mobile-dev/
 ### Prerequisites
 * Node.js (v18 or higher recommended)
 * npm (v9 or higher)
-* Android Studio / Android SDK _(for the Android app)_
+* Android Studio / Android SDK
 
 ### Backend Setup & Running
 Install dependencies for the root workspace and server:
@@ -103,7 +87,6 @@ Start the backend server:
 npm run server
 # or: npm run dev
 # Server runs on http://localhost:4000
-# WebSocket listener runs on ws://localhost:4000/ws
 ```
 
 ### Android Client Setup
